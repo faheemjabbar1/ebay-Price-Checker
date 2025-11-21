@@ -1,13 +1,15 @@
 # eBay Price Scraper with Playwright
 
-A Python-based web scraper that searches for products on eBay and finds the lowest-priced item. The scraper runs in **headed mode** (visible browser) so you can watch the entire scraping process in real-time.
+A Python-based web scraper that searches for products on eBay and finds the lowest-priced item. Features a graphical user interface for easy copy/paste and supports multiple eBay regions.
 
 ## Features
 
+- 🌍 **Multiple eBay Regions** - Search on eBay UK, US, DE, FR, AU, or CA
+- 🖥️ **GUI Interface** - Easy-to-use graphical interface with copy/paste support
 - 🔍 **Search for any product** on eBay
 - 💰 **Automatically sort** results by lowest price first
 - 🎯 **Extract price information** from the lowest-priced item
-- 👁️ **Visible browser mode** - watch the scraping happen in real-time
+- 👁️ **Visible browser mode** - watch the scraping happen in real-time (optional)
 - 🛡️ **Robust error handling** for network issues and missing elements
 - 🍪 **Automatic cookie consent** handling
 - ⏱️ **Intelligent delays** to avoid rate limiting
@@ -17,8 +19,11 @@ A Python-based web scraper that searches for products on eBay and finds the lowe
 
 ```
 ebay-Price-Checker/
-├── scraper.py          # Main scraper script
-├── requirements.txt    # Python dependencies
+├── scraper.py          # Core scraper logic and CLI
+├── gui.py             # Graphical user interface
+├── setup.bat          # Windows setup script
+├── run_gui.bat        # Windows GUI launcher
+├── requirements.txt   # Python dependencies
 ├── README.md          # This file
 └── .gitignore         # Git ignore file
 ```
@@ -28,7 +33,31 @@ ebay-Price-Checker/
 - Python 3.7 or higher
 - pip (Python package installer)
 
-## Installation
+## Quick Start (Windows)
+
+### 1. One-Click Setup
+
+Double-click **`setup.bat`** in Windows Explorer. This will automatically:
+
+- Create a virtual environment
+- Install all dependencies
+- Install Chromium browser
+
+Wait for the setup to complete (may take a few minutes).
+
+### 2. Run the GUI
+
+Double-click **`run_gui.bat`** to launch the graphical interface.
+
+#### Using the GUI:
+
+1. Select your eBay region (default: UK)
+2. Paste or type your product name
+3. Click "🔍 Search eBay" or press Enter
+4. Wait for results
+5. Click "📋 Copy URL to Clipboard" to copy the product link
+
+## Installation (Manual/Cross-Platform)
 
 ### Step 1: Clone the Repository
 
@@ -37,70 +66,63 @@ git clone <your-repo-url>
 cd ebay-Price-Checker
 ```
 
-### Step 2: Create a Virtual Environment (Recommended)
+### Step 2: Create a Virtual Environment
 
 **On Linux/Mac:**
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
 **On Windows:**
+
 ```bash
 python -m venv venv
 venv\Scripts\activate
 ```
 
-### Step 3: Install Python Dependencies
+### Step 3: Install Dependencies
 
 ```bash
-pip install -r requirements.txt
-```
-
-### Step 4: Install Playwright Browsers
-
-Playwright requires browser binaries to be installed separately:
-
-```bash
+pip install playwright
 playwright install chromium
-```
-
-Or install all browsers:
-
-```bash
-playwright install
 ```
 
 ## Usage
 
-### Method 1: Command-Line Argument
-
-Run the scraper with your search term as an argument:
+### GUI Mode (Recommended)
 
 ```bash
-python scraper.py "wireless headphones"
+python gui.py
 ```
+
+Or on Windows, just double-click `run_gui.bat`.
+
+### Command-Line Mode
+
+**Method 1: Command-Line Argument**
 
 ```bash
-python scraper.py "gaming keyboard"
+python scraper.py "Sheba Select Slices Cat Wet Food"
 ```
 
-```bash
-python scraper.py "macbook pro"
-```
-
-### Method 2: Interactive Input
-
-Run the scraper without arguments and you'll be prompted to enter a search term:
+**Method 2: Interactive Input**
 
 ```bash
 python scraper.py
 ```
 
-Then enter your search term when prompted:
-```
-Enter the product you want to search for: wireless headphones
-```
+Then enter your search term and region when prompted.
+
+## Supported Regions
+
+- **UK** - eBay.co.uk (default)
+- **US** - eBay.com
+- **DE** - eBay.de (Germany)
+- **FR** - eBay.fr (France)
+- **AU** - eBay.com.au (Australia)
+- **CA** - eBay.ca (Canada)
 
 ## Example Output
 
@@ -112,8 +134,8 @@ Enter the product you want to search for: wireless headphones
 🚀 Launching browser...
 ✅ Browser launched successfully
 
-🔍 Searching eBay for: "wireless headphones"
-📡 Navigating to eBay.com...
+🔍 Searching eBay UK for: "Sheba Cat Food"
+📡 Navigating to https://www.ebay.co.uk...
 🍪 Accepting cookie consent...
 ✅ Cookie consent accepted
 
@@ -173,10 +195,12 @@ scraper = EbayScraper(headless=True)
 ### Adjusting Delays
 
 The scraper includes delays between actions to:
+
 - Allow you to observe what's happening
 - Avoid being rate-limited by eBay
 
 You can adjust these delays in `scraper.py` by modifying the `time.sleep()` values:
+
 - Shorter delays = faster scraping (but higher chance of being blocked)
 - Longer delays = slower scraping (but more reliable)
 
@@ -193,6 +217,7 @@ You can adjust these delays in `scraper.py` by modifying the `time.sleep()` valu
 ### Issue: Browser doesn't launch
 
 **Solutions**:
+
 1. Make sure you ran `playwright install chromium`
 2. Check if you have the required system dependencies:
    ```bash
@@ -202,6 +227,7 @@ You can adjust these delays in `scraper.py` by modifying the `time.sleep()` valu
 ### Issue: Timeout errors
 
 **Solutions**:
+
 1. Check your internet connection
 2. eBay might be slow - try increasing timeout values in the code
 3. Your IP might be rate-limited - wait a few minutes and try again

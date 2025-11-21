@@ -13,20 +13,35 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 class EbayScraper:
     """eBay web scraper for finding the lowest-priced products."""
 
-    def __init__(self, headless=False):
+    # eBay region URLs
+    EBAY_REGIONS = {
+        'UK': 'https://www.ebay.co.uk',
+        'US': 'https://www.ebay.com',
+        'DE': 'https://www.ebay.de',
+        'FR': 'https://www.ebay.fr',
+        'AU': 'https://www.ebay.com.au',
+        'CA': 'https://www.ebay.ca',
+    }
+
+    def __init__(self, headless=False, region='UK'):
         """
         Initialize the scraper.
 
         Args:
             headless (bool): Whether to run browser in headless mode (default: False for visible browser)
+            region (str): eBay region to search (default: 'UK')
         """
         self.headless = headless
+        self.region = region
+        self.ebay_url = self.EBAY_REGIONS.get(region, self.EBAY_REGIONS['UK'])
         self.browser = None
         self.page = None
         self.playwright = None
+        self.context = None
 
     def start(self):
         """Start the browser and create a new page."""
+        import os
         print("🚀 Launching browser...")
         self.playwright = sync_playwright().start()
 
@@ -36,17 +51,57 @@ class EbayScraper:
             args=['--start-maximized']  # Start browser maximized
         )
 
-        # Create a new browser context with custom viewport
-        context = self.browser.new_context(
-            viewport={'width': 1280, 'height': 720},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        )
+        # Set geolocation and locale based on region
+        geolocation_settings = {
+            'UK': {'latitude': 51.5074, 'longitude': -0.1278, 'locale': 'en-GB'},  # London
+            'US': {'latitude': 37.7749, 'longitude': -122.4194, 'locale': 'en-US'},  # San Francisco
+            'DE': {'latitude': 52.5200, 'longitude': 13.4050, 'locale': 'de-DE'},  # Berlin
+            'FR': {'latitude': 48.8566, 'longitude': 2.3522, 'locale': 'fr-FR'},  # Paris
+            'AU': {'latitude': -33.8688, 'longitude': 151.2093, 'locale': 'en-AU'},  # Sydney
+            'CA': {'latitude': 43.6532, 'longitude': -79.3832, 'locale': 'en-CA'},  # Toronto
+        }
 
-        self.page = context.new_page()
-        print("✅ Browser launched successfully\n")
+        region_settings = geolocation_settings.get(self.region, geolocation_settings['UK'])
+
+        # Path to store cookies
+        cookies_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'browser_data')
+        os.makedirs(cookies_dir, exist_ok=True)
+        cookies_file = os.path.join(cookies_dir, f'ebay_{self.region.lower()}_cookies.json')
+
+        # Create a new browser context with custom settings
+        context_options = {
+            'viewport': {'width': 1280, 'height': 720},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'locale': region_settings['locale'],
+            'geolocation': {
+                'latitude': region_settings['latitude'],
+                'longitude': region_settings['longitude']
+            },
+            'permissions': ['geolocation'],
+        }
+
+        # Load saved cookies if they exist
+        if os.path.exists(cookies_file):
+            print(f"📂 Loading saved cookies for {self.region}...")
+            context_options['storage_state'] = cookies_file
+
+        self.context = self.browser.new_context(**context_options)
+        self.page = self.context.new_page()
+        self.cookies_file = cookies_file
+
+        print(f"✅ Browser launched successfully (Location: {self.region})\n")
 
     def close(self):
         """Close the browser and cleanup resources."""
+        # Save cookies before closing
+        if self.context and hasattr(self, 'cookies_file'):
+            try:
+                print("💾 Saving cookies for next session...")
+                self.context.storage_state(path=self.cookies_file)
+                print(f"✅ Cookies saved to {self.cookies_file}")
+            except Exception as e:
+                print(f"⚠️  Could not save cookies: {str(e)}")
+
         if self.browser:
             print("\n🔒 Closing browser...")
             self.browser.close()
@@ -80,6 +135,37 @@ class EbayScraper:
             # If no cookie popup found, continue silently
             pass
 
+    def set_delivery_location(self):
+        """Set the delivery location based on the region."""
+        try:
+            # For UK, set a UK postcode
+            region_postcodes = {
+                'UK': 'SW1A 1AA',  # London postcode
+                'US': '10001',  # New York ZIP
+                'DE': '10115',  # Berlin postcode
+                'FR': '75001',  # Paris postcode
+                'AU': '2000',  # Sydney postcode
+                'CA': 'M5H 2N2',  # Toronto postcode
+            }
+
+            postcode = region_postcodes.get(self.region, region_postcodes['UK'])
+
+            print(f"📍 Setting delivery location to {self.region} ({postcode})...")
+
+            # Try to set location via cookie/localStorage
+            # This simulates eBay's location cookie
+            self.page.evaluate(f"""
+                localStorage.setItem('ebay_postcode', '{postcode}');
+                localStorage.setItem('ebay_country', '{self.region}');
+            """)
+
+            print(f"✅ Delivery location set to {self.region}\n")
+            return True
+
+        except Exception as e:
+            print(f"⚠️  Could not set delivery location: {str(e)}")
+            return False
+
     def search_product(self, search_term):
         """
         Search for a product on eBay.
@@ -91,15 +177,18 @@ class EbayScraper:
             bool: True if search was successful, False otherwise
         """
         try:
-            print(f"🔍 Searching eBay for: \"{search_term}\"")
+            print(f"🔍 Searching eBay {self.region} for: \"{search_term}\"")
 
             # Navigate to eBay homepage
-            print("📡 Navigating to eBay.com...")
-            self.page.goto("https://www.ebay.com", timeout=30000)
+            print(f"📡 Navigating to {self.ebay_url}...")
+            self.page.goto(self.ebay_url, timeout=30000)
             time.sleep(2)  # Wait to see the homepage
 
             # Handle cookie consent if present
             self.handle_cookie_consent()
+
+            # Set delivery location
+            self.set_delivery_location()
 
             # Find the search bar (eBay uses input with type="text" and various possible selectors)
             search_selectors = [
@@ -154,14 +243,25 @@ class EbayScraper:
 
             # Wait for search results to load
             print("⏳ Waiting for search results...")
-            self.page.wait_for_load_state('networkidle', timeout=15000)
-            time.sleep(2)  # Wait to see the results
+            try:
+                # Try to wait for network idle, but don't fail if it times out
+                self.page.wait_for_load_state('domcontentloaded', timeout=10000)
+                print("✅ Page loaded")
+            except:
+                print("⚠️  Page still loading, but continuing...")
+
+            time.sleep(3)  # Give it extra time to fully load
+
+            # Debug: Print current URL to see where we are
+            current_url = self.page.url
+            print(f"📍 Current URL: {current_url}")
 
             # Check if we have results
             no_results_selectors = [
                 'text="No exact matches found"',
                 'text="0 results"',
-                '.srp-save-null-search'
+                '.srp-save-null-search',
+                'text="No results found"'
             ]
 
             for selector in no_results_selectors:
@@ -171,6 +271,26 @@ class EbayScraper:
                         return False
                 except:
                     continue
+
+            # Verify we actually have product listings
+            try:
+                # Wait a bit for products to appear
+                print("🔍 Waiting for product listings to appear...")
+                self.page.wait_for_selector('li.s-card, .s-item', timeout=10000)
+                products = self.page.locator('li.s-card, .s-item').count()
+                print(f"📊 Found {products} product listings")
+                if products == 0:
+                    print("❌ No product listings found on page")
+                    # Take a screenshot for debugging
+                    try:
+                        self.page.screenshot(path='debug_search_results.png')
+                        print("📸 Screenshot saved to debug_search_results.png")
+                    except:
+                        pass
+                    return False
+            except Exception as e:
+                print(f"⚠️  Error checking for products: {str(e)}")
+                print("⚠️  Could not find products, but continuing...")
 
             print("✅ Search results loaded successfully\n")
             return True
@@ -184,7 +304,7 @@ class EbayScraper:
 
     def sort_by_lowest_price(self):
         """
-        Sort search results by lowest price first.
+        Sort search results by lowest price first by manipulating the URL.
 
         Returns:
             bool: True if sorting was successful, False otherwise
@@ -192,72 +312,51 @@ class EbayScraper:
         try:
             print("💰 Sorting results by lowest price...")
 
-            # eBay uses a sort dropdown - common selectors
-            sort_selectors = [
-                'button[aria-label*="Sort selector"]',
-                'button[aria-label*="Sort"]',
-                'select.srp-sort-select',
-                'button.srp-controls__control--highlighted',
-                'button:has-text("Sort")',
-            ]
+            # Get current URL
+            current_url = self.page.url
+            print(f"🔍 Current URL: {current_url}")
 
-            sort_button = None
-            for selector in sort_selectors:
-                try:
-                    if self.page.locator(selector).first.is_visible(timeout=3000):
-                        sort_button = selector
-                        break
-                except:
-                    continue
+            # Parse URL and parameters
+            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-            if not sort_button:
-                print("⚠️  Could not find sort button, trying alternative method...")
-                # Try to find the sort dropdown directly
-                try:
-                    self.page.select_option('select.srp-controls__control', label='Price + Shipping: lowest first')
-                    time.sleep(2)
-                    print("✅ Sorted by lowest price (using dropdown)\n")
-                    return True
-                except:
-                    print("❌ Error: Could not find sort options")
-                    return False
+            parsed = urlparse(current_url)
+            params = parse_qs(parsed.query, keep_blank_values=True)
 
-            # Click the sort button to open dropdown
-            print("📊 Opening sort menu...")
-            self.page.click(sort_button)
-            time.sleep(1.5)  # Wait for dropdown to appear
+            # Add or update the sort parameter
+            params['_sop'] = ['15']  # Price + Shipping: lowest first
 
-            # Look for "lowest price" option in the dropdown
-            price_option_selectors = [
-                'a:has-text("Price + Shipping: lowest first")',
-                'li:has-text("Price + Shipping: lowest first")',
-                'a:has-text("Lowest Price")',
-                'span:has-text("Price + Shipping: lowest first")',
-            ]
+            # Remove tracking parameters that might interfere
+            params.pop('_trksid', None)
 
-            price_option = None
-            for selector in price_option_selectors:
-                try:
-                    if self.page.locator(selector).first.is_visible(timeout=2000):
-                        price_option = selector
-                        break
-                except:
-                    continue
+            # Rebuild the query string
+            new_query = urlencode(params, doseq=True)
+            new_url = urlunparse((
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment
+            ))
 
-            if not price_option:
-                print("❌ Error: Could not find lowest price sorting option")
-                return False
+            print(f"🔗 New sorted URL: {new_url}")
 
-            # Click on the lowest price option
-            print("💸 Selecting 'Price + Shipping: lowest first'...")
-            self.page.click(price_option)
+            # Navigate to the sorted URL
+            print("🔗 Navigating to sorted results...")
+            self.page.goto(new_url, timeout=30000)
 
-            # Wait for the page to reload with sorted results
-            print("⏳ Waiting for results to reload...")
+            # Wait for the page to load
+            print("⏳ Waiting for sorted results to load...")
             self.page.wait_for_load_state('networkidle', timeout=15000)
             time.sleep(2)  # Wait to see the sorted results
 
-            print("✅ Results sorted by lowest price\n")
+            # Verify the sort parameter is in the final URL
+            final_url = self.page.url
+            if '_sop=15' in final_url:
+                print("✅ Results sorted by lowest price (_sop=15 confirmed)\n")
+            else:
+                print("⚠️  Sort parameter may not have persisted, but continuing...\n")
+
             return True
 
         except PlaywrightTimeoutError:
@@ -267,105 +366,233 @@ class EbayScraper:
             print(f"❌ Error during sorting: {str(e)}")
             return False
 
-    def extract_lowest_price(self):
+    def extract_lowest_price(self, store_name=None):
         """
-        Click on the first product and extract its price.
+        Extract the lowest price and optionally a specific store's price.
+
+        Args:
+            store_name (str): Optional store name to find (e.g., 'uniquesellingmart')
 
         Returns:
-            dict: Dictionary containing price, title, and URL, or None if extraction failed
+            dict: Dictionary containing lowest price info and optional store price, or None if extraction failed
         """
         try:
-            print("🎯 Locating the lowest-priced product...")
+            print("🎯 Locating the first product (iid:1)...")
 
-            # Find the first product listing
-            # eBay search results are typically in list items with class containing 's-item'
-            product_selectors = [
-                '.s-item__link',
-                '.s-item__wrapper a.s-item__link',
-                '.srp-results .s-item a',
-            ]
+            # Find the first listing item with data-view containing iid:1
+            first_item = self.page.locator('li[data-view*="iid:1"]').first
 
-            first_product = None
-            for selector in product_selectors:
-                try:
-                    products = self.page.locator(selector)
-                    if products.count() > 0:
-                        # Skip the first one if it's a sponsored/featured item
-                        # Usually the first real product is at index 0 or 1
-                        first_product = products.first
-                        break
-                except:
-                    continue
-
-            if not first_product:
-                print("❌ Error: Could not find any product listings")
+            if first_item.count() == 0:
+                print("❌ Error: Could not find first item (iid:1)")
                 return None
 
-            # Get the product URL before clicking
-            product_url = first_product.get_attribute('href')
+            print("✅ Found first item (iid:1)")
 
-            # Click on the first product
-            print("🖱️  Clicking on the lowest-priced product...")
-            first_product.click()
-            time.sleep(2)  # Wait to see the product page loading
-
-            # Wait for the product page to load
-            print("⏳ Waiting for product page to load...")
-            self.page.wait_for_load_state('networkidle', timeout=15000)
-            time.sleep(2)  # Wait to see the product page
-
-            # Extract the product title
-            title_selectors = [
-                '.x-item-title__mainTitle',
-                'h1.x-item-title__mainTitle',
-                '.it-ttl',
-                'h1[class*="title"]',
+            # Find the clickable link element (the <a> tag containing the title)
+            link_selectors = [
+                'a.s-card__link[href*="/itm/"]',
+                'a.s-item__link'
             ]
 
-            product_title = "Unknown Product"
-            for selector in title_selectors:
+            clickable_link = None
+            for selector in link_selectors:
                 try:
-                    if self.page.locator(selector).is_visible(timeout=3000):
-                        product_title = self.page.locator(selector).text_content().strip()
+                    elem = first_item.locator(selector).first
+                    if elem.count() > 0:
+                        clickable_link = elem
+                        print(f"✅ Found clickable link with selector: {selector}")
                         break
-                except:
+                except Exception as e:
+                    print(f"⚠️  Selector {selector} failed: {str(e)}")
                     continue
 
-            # Extract the price
+            if not clickable_link:
+                print("❌ Error: Could not find clickable link element")
+                return None
+
+            # Get title text from inside the link
+            try:
+                title_elem = clickable_link.locator('.su-styled-text, .s-card__title, .s-item__title').first
+                if title_elem.count() > 0:
+                    title_text = title_elem.text_content().strip()
+                else:
+                    # Fallback to link text
+                    title_text = clickable_link.text_content().strip()[:100]  # First 100 chars
+            except:
+                title_text = "Product Title"
+
+            print(f"📝 Product title: {title_text}")
+
+            # Extract listing ID from the parent li element's data-listingid attribute
+            listing_id = first_item.get_attribute('data-listingid')
+
+            if listing_id:
+                # Construct clean URL using listing ID
+                product_url = f"{self.ebay_url}/itm/{listing_id}"
+                print(f"📝 Listing ID: {listing_id}")
+                print(f"🔗 Product URL: {product_url}")
+            else:
+                # Fallback to href attribute
+                product_url = clickable_link.get_attribute('href')
+                print(f"🔗 Product URL (from href): {product_url}")
+
+            print("🖱️  Navigating to product page...")
+            self.page.goto(product_url, timeout=30000)
+
+            # Wait for product page to load
+            print("⏳ Waiting for product page to load...")
+            try:
+                self.page.wait_for_load_state('domcontentloaded', timeout=10000)
+                print("✅ Product page loaded")
+            except:
+                print("⚠️  Page loading slowly, but continuing...")
+
+            time.sleep(3)  # Extra wait for dynamic content
+
+            # Extract price from product page
+            print("💰 Extracting price from product page...")
+
             price_selectors = [
+                '.x-bin-price__content .x-price-primary span.ux-textspans',
+                '.x-price-primary span.ux-textspans',
                 '.x-price-primary span',
-                '.x-price-primary',
-                '#prcIsum',
-                '.x-bin-price__content .ux-textspans',
-                'div[class*="price"] span[class*="ux-textspans"]',
+                '#prcIsum'
             ]
 
             product_price = None
             for selector in price_selectors:
                 try:
-                    if self.page.locator(selector).first.is_visible(timeout=3000):
-                        price_text = self.page.locator(selector).first.text_content().strip()
-                        # Clean up the price text
+                    price_elem = self.page.locator(selector).first
+                    if price_elem.is_visible(timeout=3000):
+                        price_text = price_elem.text_content().strip()
                         product_price = self.clean_price(price_text)
                         if product_price:
+                            print(f"✅ Found price: {product_price}")
                             break
                 except:
                     continue
 
             if not product_price:
-                print("❌ Error: Could not extract product price")
+                print("❌ Error: Could not extract price from product page")
                 return None
 
-            print("✅ Successfully extracted product information\n")
+            product_url = self.page.url
 
-            return {
-                'title': product_title,
+            lowest_price_info = {
+                'title': title_text,
                 'price': product_price,
-                'url': product_url or self.page.url
+                'url': product_url
             }
 
+            print(f"✅ Lowest price: {product_price} - {title_text}")
+
+            result = {
+                'lowest': lowest_price_info
+            }
+
+            # If store name provided, go back and find that store's listing
+            if store_name:
+                print(f"\n🔙 Going back to search results...")
+                self.page.go_back()
+                self.page.wait_for_load_state('networkidle', timeout=15000)
+                time.sleep(2)
+
+                print(f"🏪 Looking for store: {store_name}...")
+
+                # Find all listing items
+                all_items = self.page.locator('li.s-card, li.s-item')
+
+                # Search through items for the store
+                for i in range(min(all_items.count(), 50)):
+                    try:
+                        item = all_items.nth(i)
+                        item_html = item.inner_html()
+
+                        # Check if this listing is from the target store
+                        if store_name.lower() in item_html.lower():
+                            print(f"✅ Found {store_name} listing at position {i + 1}")
+
+                            # Find and click the link (not just the title)
+                            store_link = None
+                            for link_selector in ['a.s-card__link[href*="/itm/"]', 'a.s-item__link']:
+                                try:
+                                    elem = item.locator(link_selector).first
+                                    if elem.count() > 0:
+                                        store_link = elem
+                                        break
+                                except:
+                                    continue
+
+                            if store_link and store_link.count() > 0:
+                                # Get title
+                                try:
+                                    title_elem = store_link.locator('.su-styled-text, .s-card__title, .s-item__title').first
+                                    if title_elem.count() > 0:
+                                        store_title = title_elem.text_content().strip()
+                                    else:
+                                        store_title = store_link.text_content().strip()[:100]
+                                except:
+                                    store_title = "Store Product"
+
+                                print(f"📝 Store product: {store_title}")
+
+                                # Extract listing ID from the parent li element's data-listingid attribute
+                                store_listing_id = item.get_attribute('data-listingid')
+
+                                if store_listing_id:
+                                    # Construct clean URL using listing ID
+                                    store_url = f"{self.ebay_url}/itm/{store_listing_id}"
+                                    print(f"📝 Store Listing ID: {store_listing_id}")
+                                    print(f"🔗 Store product URL: {store_url}")
+                                else:
+                                    # Fallback to href attribute
+                                    store_url = store_link.get_attribute('href')
+                                    print(f"🔗 Store product URL (from href): {store_url}")
+
+                                print("🖱️  Navigating to store product page...")
+                                self.page.goto(store_url, timeout=30000)
+
+                                try:
+                                    self.page.wait_for_load_state('domcontentloaded', timeout=10000)
+                                    print("✅ Store product page loaded")
+                                except:
+                                    print("⚠️  Page loading slowly, but continuing...")
+
+                                time.sleep(3)
+
+                                # Extract price from store's product page
+                                store_price = None
+                                for selector in price_selectors:
+                                    try:
+                                        price_elem = self.page.locator(selector).first
+                                        if price_elem.is_visible(timeout=3000):
+                                            price_text = price_elem.text_content().strip()
+                                            store_price = self.clean_price(price_text)
+                                            if store_price:
+                                                print(f"✅ Store price: {store_price}")
+                                                break
+                                    except:
+                                        continue
+
+                                if store_price:
+                                    result['your_store'] = {
+                                        'title': store_title,
+                                        'price': store_price,
+                                        'url': self.page.url
+                                    }
+                                break
+                    except Exception as e:
+                        print(f"⚠️  Error checking item {i}: {str(e)}")
+                        continue
+
+                if 'your_store' not in result:
+                    print(f"⚠️  Could not find listing from store: {store_name}")
+
+            print("\n✅ Successfully extracted price information\n")
+            return result
+
         except PlaywrightTimeoutError:
-            print("❌ Error: Timeout while loading product page")
+            print("❌ Error: Timeout while extracting prices")
             return None
         except Exception as e:
             print(f"❌ Error during price extraction: {str(e)}")
@@ -401,12 +628,13 @@ class EbayScraper:
 
         return None
 
-    def scrape(self, search_term):
+    def scrape(self, search_term, store_name=None):
         """
         Main scraping method that orchestrates the entire process.
 
         Args:
             search_term (str): The product to search for
+            store_name (str): Optional store name to find your listing
 
         Returns:
             dict: Product information or None if scraping failed
@@ -419,12 +647,12 @@ class EbayScraper:
             if not self.search_product(search_term):
                 return None
 
-            # Sort by lowest price
+            # Sort results by lowest price
             if not self.sort_by_lowest_price():
-                print("⚠️  Warning: Could not sort by price, continuing with default sort...")
+                print("⚠️  Sorting failed, but continuing with unsorted results...")
 
-            # Extract the lowest price
-            result = self.extract_lowest_price()
+            # Extract the lowest price and optionally the store's price
+            result = self.extract_lowest_price(store_name=store_name)
 
             # Wait a bit before closing so user can see the final result
             time.sleep(3)
@@ -455,8 +683,18 @@ def main():
         print("❌ Error: Please provide a search term")
         sys.exit(1)
 
+    # Ask for region
+    print("\nAvailable regions: UK, US, DE, FR, AU, CA")
+    region = input("Enter eBay region (default: UK): ").strip().upper()
+    if not region:
+        region = 'UK'
+
+    if region not in EbayScraper.EBAY_REGIONS:
+        print(f"⚠️  Unknown region '{region}', using UK instead")
+        region = 'UK'
+
     # Create scraper instance (headed mode by default)
-    scraper = EbayScraper(headless=False)
+    scraper = EbayScraper(headless=False, region=region)
 
     try:
         # Run the scraper
